@@ -35,4 +35,4 @@ python_classes = ["Test*"]
 python_functions = ["test_*"]
 
 [tool.uv.sources]
-datacore = { git = "https://github.com/8kb/datacore", tag = "v0.2.0" }
+datacore = { git = "https://github.com/8kb/datacore", tag = "v0.2.1" }
