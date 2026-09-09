@@ -1,0 +1,38 @@
+[project]
+name = "benchcore"
+version = "0.1.0"
+description = "A standalone evaluation subsystem: score any model against ICL benchmarks (CORE) and chat-style tasks (ARC/MMLU/GSM8K/HumanEval) through small duck-typed protocols"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "torch>=2.9.1",
+    "datacore[parquet]>=0.2.0",
+    "filelock>=3.19.0",
+]
+
+[project.optional-dependencies]
+# suite.py's CORE bundle config (core.yaml) is YAML; nothing else in benchcore needs it.
+bundle = [
+    "pyyaml>=6.0",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.0.0",
+]
+
+[build-system]
+requires = ["setuptools>=65.0.0"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["benchcore*"]
+
+[tool.pytest.ini_options]
+testpaths = ["benchcore/tests"]
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+
+[tool.uv.sources]
+datacore = { git = "https://github.com/8kb/datacore", tag = "v0.2.0" }
