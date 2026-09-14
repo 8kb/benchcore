@@ -8,10 +8,10 @@ For the family-wide pattern this repo follows (one entrypoint, zero host imports
 consumption contract) see [llmllab/AGENTS.md](../llmllab/AGENTS.md) and
 [llmllab/docs/subsystem-conventions.md](../llmllab/docs/subsystem-conventions.md).
 
-Its host application is [8kb/nanochat](https://github.com/8kb/nanochat), which pins this repo by
-git tag (`pyproject.toml`'s `[tool.uv.sources]`) and consumes it entirely through `BenchManager` —
-see nanochat's own [docs/architecture.md](https://github.com/8kb/nanochat/blob/master/docs/architecture.md)
-for that side, and `scripts/base_eval.py`/`scripts/chat_eval.py` there for the CLI entrypoints.
+A host application pins this repo by git tag (`pyproject.toml`'s `[tool.uv.sources]`) and consumes
+it entirely through `BenchManager` — see [`llmllab/AGENTS.md`](../llmllab/AGENTS.md)'s family map
+for which repos currently do that, and each one's own `docs/architecture.md` for its side of the
+contract.
 
 benchcore builds on [8kb/datacore](https://github.com/8kb/datacore) (`ExampleSet`,
 `load_hub_dataset`) — the only standalone sibling it depends on. It does **not** depend on
@@ -62,7 +62,8 @@ benchcore/
   `load_hub_dataset` own the container half (slicing, deterministic mixing, HF-hub parquet read);
   `Task` adds only `eval_type`/`evaluate()`/`reward()` and `render_mc`. A new benchmark task
   belongs here (subclassing `Task`); a new *training-data* container with no eval criterion
-  belongs in the host application instead (nanochat's own `sft_data.py`, for SmolTalk) — see
+  belongs in the host application instead (nanochat's `sft_data.py` and tinylab's `data.py` both
+  build their own SmolTalk container this way) — see
   [datacore/docs/architecture.md#examplesethubtable-a-separate-standalone-value-type-surface](https://github.com/8kb/datacore/blob/main/docs/architecture.md#examplesethubtable-a-separate-standalone-value-type-surface).
 - **`ScriptedModel.mark_wrong`/`set_next_token` are two independent mechanisms, not one.**
   `mark_wrong(ids)` flips a whole row's teacher-forced roll (used by CORE's mean-loss ranking and
@@ -85,16 +86,17 @@ host application (or `modelcore`) — see
 [docs/architecture.md#verifying-a-change-is-behavior-preserving](docs/architecture.md#verifying-a-change-is-behavior-preserving)
 for the from-scratch standalone-copy recipe.
 
-A change here that a host application depends on needs that host's own suite run against it too —
-for nanochat, `scripts/base_eval.py --eval=core`/`scripts/chat_eval.py` against real cached data
-plus `tests/test_goldens.py` after an editable install (`uv pip install -e ../benchcore` from
-nanochat's venv) — this repo's own tests proving *it* still works is necessary but not sufficient
-proof the host is unaffected.
+A change here that a host application depends on needs that host's own suite run against it too,
+after an editable install (`uv pip install -e ../benchcore` from the host's venv) — see
+[`llmllab/docs/subsystem-conventions.md`](../llmllab/docs/subsystem-conventions.md)'s tag-bump rule.
+This repo's own tests proving *it* still works is necessary but not sufficient proof a host is
+unaffected.
 
-**Known pre-existing failure, not a regression:** `test_execution.py::test_memory_limit` fails on
-macOS — the guard's `resource.setrlimit` calls are skipped on darwin (see `execution.py`'s
-`GUARD`), so the 256MB limit isn't actually enforced there. Documented in nanochat's
-`docs/roadmap.md` before this code moved here; it followed the code into this repo unchanged.
+**Known pre-existing failure, not a regression, on macOS specifically:**
+`test_execution.py::test_memory_limit` fails there — the guard's `resource.setrlimit` calls are
+skipped on darwin (see `execution.py`'s `GUARD`), so the 256MB limit isn't actually enforced on
+that platform. Pre-existing before this code moved into its own repo; it followed the code
+unchanged.
 
 ## Style
 

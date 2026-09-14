@@ -7,12 +7,12 @@ host-application imports, one Manager entrypoint, its own tests/docs/packaging, 
 proving standalone-ness), different concern — and unlike either of them, it has **zero dependency
 on modelcore at all**. A model reaches benchcore through a duck-typed protocol, not a class.
 
-Its host application, [8kb/nanochat](https://github.com/8kb/nanochat), owns checkpoint loading,
-CLI flags, and the training loop — none of which this package knows about. `scripts/base_eval.py`
-and `scripts/chat_eval.py` there are the CLI entrypoints; `nanochat.tokenizer.RustBPETokenizer` and
-`nanochat.engine.Engine` satisfy this package's `Tokenizer`/`Generator` protocols unmodified. See
-[nanochat's docs/architecture.md](https://github.com/8kb/nanochat/blob/master/docs/architecture.md#consuming-benchmanager)
-for that side.
+A host application owns checkpoint loading, CLI flags, and the training loop — none of which this
+package knows about; its own tokenizer/engine satisfy this package's `Tokenizer`/`Generator`
+protocols unmodified. See that host's own `docs/architecture.md` for its side (e.g.
+[nanochat's](https://github.com/8kb/nanochat/blob/master/docs/architecture.md#consuming-benchmanager),
+whose `scripts/base_eval.py`/`scripts/chat_eval.py` are its CLI entrypoints and
+`nanochat.tokenizer.RustBPETokenizer`/`nanochat.engine.Engine` its protocol implementations).
 
 ## `BenchManager`: the one entrypoint
 
@@ -54,9 +54,10 @@ Derived directly from what the evaluation code actually calls (not designed up f
 - `Generator`: `generate_batch(tokens, num_samples=1, **kwargs) -> (results, masks)` — only
   `results` is read.
 
-A `modelcore.Model` satisfies `Model` unmodified (it's an `nn.Module`); `nanochat.tokenizer.
-RustBPETokenizer` satisfies `Tokenizer` unmodified; `nanochat.engine.Engine` satisfies `Generator`
-unmodified. None of them need an adapter class.
+A `modelcore.Model` satisfies `Model` unmodified (it's an `nn.Module`); a host's own tokenizer and
+generator commonly satisfy `Tokenizer`/`Generator` unmodified too (`nanochat.tokenizer.
+RustBPETokenizer`/`nanochat.engine.Engine`, `tinylab.tokenizer.RustBPETokenizer`/
+`tinylab.engine.Engine`). None of them need an adapter class.
 
 ## Where a benchmark's "container" half lives vs. its "eval" half
 
@@ -67,8 +68,8 @@ exactly two things this repo adds: `eval_type` ('categorical' | 'generative') an
 useful to a host's own training-data code with zero benchcore dependency (see
 [datacore/docs/architecture.md](https://github.com/8kb/datacore/blob/main/docs/architecture.md#examplesethubtable-a-separate-standalone-value-type-surface)).
 A benchmark that can be scored belongs in `benchcore/tasks/`; a record collection that can't
-(nanochat's SmolTalk, pure SFT training data) belongs in the host application instead, built on
-`datacore.ExampleSet` directly.
+(SmolTalk, pure SFT training data) belongs in the host application instead, built on
+`datacore.ExampleSet` directly (nanochat's `sft_data.py` and tinylab's `data.py` both do this).
 
 ## CORE evaluation
 
@@ -167,10 +168,15 @@ local Python interpreter). For a from-scratch standalone-copy check (the actual 
 mkdir -p /tmp/bc && cp -r benchcore /tmp/bc/benchcore && cd /tmp/bc && python -m pytest benchcore/tests -v
 ```
 
-For the CORE prompt-rendering rewrite specifically (jinja2 → plain Python), cross-check against
-nanochat's `tests/goldens/eval_core_prompts.json` (captured from the pre-extraction jinja2 output
-by `dev/capture_eval_goldens.py`, frozen) — see
-[its docs/architecture.md](https://github.com/8kb/nanochat/blob/master/docs/architecture.md#verifying-a-change-is-behavior-preserving)
-for that side. This repo's own suite proving correctness of a fresh build is necessary but not
-proof a change leaves the host unaffected — for a change the host depends on, also run its suite
-against an editable install (`uv pip install -e ../benchcore` from nanochat's venv).
+For the CORE prompt-rendering rewrite specifically (jinja2 → plain Python), this repo's own
+`tests/test_prompts.py` is independently cross-checked against nanochat's
+`tests/goldens/eval_core_prompts.json` (captured from the real pre-extraction jinja2 output by
+`dev/capture_eval_goldens.py`, frozen, before this repo existed) — see
+[nanochat's docs/architecture.md](https://github.com/8kb/nanochat/blob/master/docs/architecture.md#verifying-a-change-is-behavior-preserving)
+for that side. A change to any of the three render functions needs that golden re-verified, not
+just this repo's own suite passing. More generally: this repo's own suite proving correctness of a
+fresh build is necessary but not proof a change leaves a host unaffected — for a change a host
+depends on, also run that host's suite against an editable install
+(`uv pip install -e ../benchcore` from its venv). See
+[`llmllab/docs/subsystem-conventions.md`](../llmllab/docs/subsystem-conventions.md) for the general
+tag-bump/verification contract.
