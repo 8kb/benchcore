@@ -20,8 +20,9 @@ Everything a caller needs — score one CORE task, score a whole CORE suite, sco
 score a whole chat suite — goes through `BenchManager`. Nothing else in `benchcore` (`core.py`,
 `chat.py`, `prompts.py`, `suite.py` internals) is meant to be reached directly from outside the
 package, except the value types and protocols `benchcore/__init__.py` re-exports (`CoreReport`/
-`ChatReport`, `CoreSuite`/`CoreTask`/`load_core_suite`, `Task` and its concrete tasks, `Model`/
-`Tokenizer`/`Generator`, `MockTokenizer`/`ScriptedModel`/`ScriptedGenerator`).
+`ChatReport`, `CoreSuite`/`CoreTask`/`load_core_suite`, `Task` and its concrete tasks,
+`build_chat_tasks`, `Model`/`Tokenizer`/`Generator`, `MockTokenizer`/`ScriptedModel`/
+`ScriptedGenerator`).
 
 ```python
 manager = BenchManager()
@@ -29,16 +30,23 @@ manager = BenchManager()
 # One CORE task, given raw data + task_meta:
 accuracy = manager.core_task(model, tokenizer, data, task_meta)
 
-# The whole CORE suite:
-suite = load_core_suite(cache_dir, max_per_task=100)
-report = manager.core(model, tokenizer, suite)          # report.core_metric
+# The whole CORE suite -- core_suite() loads (downloading if needed) and scores in one call:
+report = manager.core_suite(model, tokenizer, cache_dir=cache_dir, max_per_task=100)  # report.core_metric
+# equivalent to: suite = load_core_suite(cache_dir, max_per_task=100); manager.core(model, tokenizer, suite)
 
 # One chat-style task:
 accuracy = manager.chat(task, model, tokenizer, generator=generator)
 
-# The whole ChatCORE suite:
-report = manager.chat_suite({"ARC-Easy": arc_easy, ...}, model, tokenizer, generator=generator)
+# The whole ChatCORE suite -- build_chat_tasks() builds the standard {name: Task} dict:
+tasks = build_chat_tasks(cache_dir=cache_dir)   # or build_chat_tasks(["ARC-Easy", "MMLU"], cache_dir=cache_dir)
+report = manager.chat_suite(tasks, model, tokenizer, generator=generator)
 ```
+
+`core_suite`/`build_chat_tasks` exist because every caller's own CLI/job-file layer used to
+hand-roll the same two things: "load the CORE bundle from a cache dir, then score it" and "map
+`ALL_CHAT_TASKS` names to their task classes" (previously duplicated identically across nanochat's
+`scripts/base_eval.py`/`scripts/chat_eval.py` and tinylab's `tinylab/ops/bench.py`) — both were
+benchcore's own names and classes already, just not benchcore's own function.
 
 ## The three protocols
 

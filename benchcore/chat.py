@@ -101,3 +101,25 @@ def chatcore_metric(task_accuracies, tasks=ALL_CHAT_TASKS, baselines=CHAT_BASELI
         for t in tasks
     ]
     return sum(centered) / len(centered)
+
+
+def build_chat_tasks(names=None, *, cache_dir):
+    """{task_name: Task} for `names` (default: every name in ALL_CHAT_TASKS), each built against
+    its test split at `cache_dir`. Moved here from three identical copies (nanochat's
+    scripts/chat_eval.py, scripts/chat_sft.py's own in-training ChatCORE check, tinylab's
+    tinylab/ops/bench.py) -- benchcore already owns both the names and the task classes, so this
+    was benchcore's own mapping duplicated at every call site. Raises ValueError naming the
+    unknown entries if `names` has any name outside ALL_CHAT_TASKS."""
+    from benchcore.tasks import ARC, GSM8K, MMLU, HumanEval
+    builders = {
+        'ARC-Easy': lambda: ARC(subset="ARC-Easy", split="test", cache_dir=cache_dir),
+        'ARC-Challenge': lambda: ARC(subset="ARC-Challenge", split="test", cache_dir=cache_dir),
+        'MMLU': lambda: MMLU(subset="all", split="test", cache_dir=cache_dir),
+        'GSM8K': lambda: GSM8K(subset="main", split="test", cache_dir=cache_dir),
+        'HumanEval': lambda: HumanEval(cache_dir=cache_dir),
+    }
+    names = list(ALL_CHAT_TASKS) if names is None else list(names)
+    unknown = set(names) - set(builders)
+    if unknown:
+        raise ValueError(f"Unknown chat task(s) {sorted(unknown)} (available: {sorted(builders)})")
+    return {name: builders[name]() for name in names}

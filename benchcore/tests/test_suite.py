@@ -8,8 +8,12 @@ import csv
 import json
 import os
 
+import torch
 import yaml
 
+from benchcore.manager import BenchManager
+from benchcore.mock import MockTokenizer, ScriptedModel
+from benchcore.prompts import batch_sequences_mc, render_prompts_mc, stack_sequences
 from benchcore.suite import center, load_core_suite
 
 
@@ -84,3 +88,44 @@ def test_load_core_suite_does_not_redownload_when_bundle_exists(tmp_path, monkey
 
     monkeypatch.setattr("benchcore.suite.download_file", _fail)
     load_core_suite(str(tmp_path)) # must not raise
+
+
+def test_core_suite_loads_and_scores_end_to_end(tmp_path):
+    """BenchManager.core_suite (load_core_suite + core in one call, replacing two identical copies
+    in nanochat's scripts/base_eval.py and tinylab's tinylab/ops/bench.py) against the same
+    synthetic-bundle path the load_core_suite tests above use -- no network, no real eval_bundle."""
+    _write_synthetic_bundle(str(tmp_path))
+    tokenizer = MockTokenizer()
+    model = ScriptedModel(vocab_size=tokenizer.get_vocab_size())
+
+    # Script the model so every one of the 10 synthetic items scores correct (gold=i%2 into a
+    # 2-choice ["yes", "no"] item) -- same technique as test_core_mc.py's _script.
+    with open(os.path.join(str(tmp_path), "eval_bundle", "eval_data", "toy_mc.jsonl")) as f:
+        items = [json.loads(line) for line in f]
+    for item in items:
+        prompts = render_prompts_mc(item, " ", [])
+        tokens, _, _ = batch_sequences_mc(tokenizer, prompts)
+        rows = [tuple(row.tolist()) for row in stack_sequences(tokens, tokenizer.get_bos_token_id())]
+        for i, row in enumerate(rows):
+            if i != item["gold"]:
+                model.mark_wrong(row)
+
+    report = BenchManager().core_suite(model, tokenizer, cache_dir=str(tmp_path), device=torch.device("cpu"))
+    assert report.results["toy_mc"] == 1.0
+    assert report.core_metric == 1.0  # perfect accuracy centers to 1 regardless of baseline
+
+
+def test_core_suite_max_per_task_forwards_to_load_core_suite(tmp_path, monkeypatch):
+    _write_synthetic_bundle(str(tmp_path))
+    seen = {}
+    real_load = load_core_suite
+
+    def _spy(cache_dir, *, max_per_task=None, **kwargs):
+        seen["max_per_task"] = max_per_task
+        return real_load(cache_dir, max_per_task=max_per_task, **kwargs)
+
+    monkeypatch.setattr("benchcore.manager.load_core_suite", _spy)
+    tokenizer = MockTokenizer()
+    model = ScriptedModel(vocab_size=tokenizer.get_vocab_size())
+    BenchManager().core_suite(model, tokenizer, cache_dir=str(tmp_path), max_per_task=3, device=torch.device("cpu"))
+    assert seen["max_per_task"] == 3

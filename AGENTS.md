@@ -22,13 +22,15 @@ optional members), so a modelcore `Model`, a raw HuggingFace model, or a mock al
 
 ```
 benchcore/
-├── manager.py       BenchManager -- the one entrypoint (core / core_task / chat / chat_suite)
+├── manager.py       BenchManager -- the one entrypoint (core / core_task / core_suite / chat /
+│                    chat_suite) -- core_suite() = load_core_suite() + core() in one call
 ├── protocols.py     Model / Tokenizer / Generator -- the duck-typed protocols a caller's
 │                    model/tokenizer/generator must satisfy
 ├── prompts.py       CORE prompt rendering (plain Python, no jinja2) + batch_sequences_mc/schema/lm
 ├── core.py            forward_model, evaluate_example, evaluate_task -- the CORE scoring loop
 ├── suite.py             CORE bundle: download/parse core.yaml + eval_meta_data.csv, centering math
-├── chat.py             generative + categorical chat-eval loops, ChatCORE metric + baselines
+├── chat.py             generative + categorical chat-eval loops, ChatCORE metric + baselines,
+│                      build_chat_tasks() (name -> Task, for the standard ALL_CHAT_TASKS suite)
 ├── execution.py         sandboxed execute_code, for HumanEval (and any future tool-use eval)
 ├── tasks/                base.py (Task(datacore.ExampleSet) + eval_type/evaluate + render_mc),
 │                        arc.py, mmlu.py, gsm8k.py, humaneval.py

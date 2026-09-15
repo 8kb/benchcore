@@ -13,7 +13,9 @@ cross its boundary. Everything else (prompts.py, core.py, chat.py internals) is 
 
 Importing this package triggers no side effects.
 """
-from benchcore.chat import ALL_CHAT_TASKS, CATEGORICAL_CHAT_TASKS, CHAT_BASELINE_ACCURACIES, chatcore_metric
+from benchcore.chat import (
+    ALL_CHAT_TASKS, CATEGORICAL_CHAT_TASKS, CHAT_BASELINE_ACCURACIES, build_chat_tasks, chatcore_metric,
+)
 from benchcore.execution import ExecutionResult, execute_code
 from benchcore.manager import BenchManager, ChatReport, CoreReport
 from benchcore.mock import MockTokenizer, ScriptedGenerator, ScriptedModel
@@ -29,4 +31,5 @@ __all__ = [
     "ExecutionResult", "execute_code",
     "MockTokenizer", "ScriptedModel", "ScriptedGenerator",
     "ALL_CHAT_TASKS", "CATEGORICAL_CHAT_TASKS", "CHAT_BASELINE_ACCURACIES", "chatcore_metric",
+    "build_chat_tasks",
 ]

@@ -5,7 +5,9 @@ benchcore.chat.ALL_CHAT_TASKS was actually evaluated.
 
 python -m pytest benchcore/tests/test_chat_metric.py -v
 """
-from benchcore.chat import ALL_CHAT_TASKS, CATEGORICAL_CHAT_TASKS, CHAT_BASELINE_ACCURACIES, chatcore_metric
+import pytest
+
+from benchcore.chat import ALL_CHAT_TASKS, CATEGORICAL_CHAT_TASKS, CHAT_BASELINE_ACCURACIES, build_chat_tasks, chatcore_metric
 from benchcore.manager import BenchManager
 from benchcore.mock import MockTokenizer, ScriptedGenerator, ScriptedModel
 from benchcore.tasks.base import Task
@@ -92,3 +94,44 @@ def test_chat_suite_omits_metric_for_a_partial_task_set():
 
     assert set(report.results) == {"ARC-Easy", "MMLU"}
     assert report.chatcore_metric is None
+
+
+def test_build_chat_tasks_default_covers_every_name(monkeypatch):
+    """build_chat_tasks(names=None) builds one of each of the five ALL_CHAT_TASKS, with the right
+    constructor kwargs -- monkeypatched to sentinel classes so this needs no network/cache_dir
+    (a real ARC/MMLU/GSM8K/HumanEval loads data eagerly in __init__)."""
+    calls = []
+
+    def _sentinel(name):
+        class _Sentinel:
+            def __init__(self, **kwargs):
+                calls.append((name, kwargs))
+        return _Sentinel
+
+    monkeypatch.setattr("benchcore.tasks.ARC", _sentinel("ARC"))
+    monkeypatch.setattr("benchcore.tasks.MMLU", _sentinel("MMLU"))
+    monkeypatch.setattr("benchcore.tasks.GSM8K", _sentinel("GSM8K"))
+    monkeypatch.setattr("benchcore.tasks.HumanEval", _sentinel("HumanEval"))
+
+    tasks = build_chat_tasks(cache_dir="/tmp/whatever")
+    assert set(tasks) == set(ALL_CHAT_TASKS)
+    called_names = [name for name, _ in calls]
+    assert called_names.count("ARC") == 2       # ARC-Easy + ARC-Challenge
+    assert called_names.count("MMLU") == 1
+    assert called_names.count("GSM8K") == 1
+    assert called_names.count("HumanEval") == 1
+    for _, kwargs in calls:
+        assert kwargs.get("cache_dir") == "/tmp/whatever"
+
+
+def test_build_chat_tasks_selects_a_subset(monkeypatch):
+    monkeypatch.setattr("benchcore.tasks.ARC", lambda **kw: object())
+    monkeypatch.setattr("benchcore.tasks.MMLU", lambda **kw: object())
+
+    tasks = build_chat_tasks(["ARC-Easy", "MMLU"], cache_dir="/tmp/whatever")
+    assert set(tasks) == {"ARC-Easy", "MMLU"}
+
+
+def test_build_chat_tasks_rejects_unknown_name():
+    with pytest.raises(ValueError, match="Unknown chat task"):
+        build_chat_tasks(["NotATask"], cache_dir="/tmp/whatever")

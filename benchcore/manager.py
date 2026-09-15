@@ -17,7 +17,7 @@ import torch
 
 from benchcore.chat import ALL_CHAT_TASKS, chatcore_metric, run_categorical_eval, run_generative_eval
 from benchcore.core import evaluate_task
-from benchcore.suite import CoreSuite, center
+from benchcore.suite import CoreSuite, center, load_core_suite
 
 
 @dataclass
@@ -78,6 +78,15 @@ class BenchManager:
             centered_results[task.label] = center(accuracy, suite.random_baselines[task.label])
         core_metric = sum(centered_results.values()) / len(centered_results)
         return CoreReport(results=results, centered_results=centered_results, core_metric=core_metric)
+
+    def core_suite(self, model, tokenizer, *, cache_dir, max_per_task=None, device=None, rank=0,
+                    world_size=1) -> CoreReport:
+        """core(), but also loading (downloading, if needed) the CORE bundle from `cache_dir` --
+        moved here from two identical copies (nanochat's scripts/base_eval.py's evaluate_core,
+        tinylab's tinylab/ops/bench.py's _run_core), both of which existed only to call
+        suite.load_core_suite then self.core(). Printing/CSV-writing stays the caller's own."""
+        suite = load_core_suite(cache_dir, max_per_task=max_per_task)
+        return self.core(model, tokenizer, suite, device=device, rank=rank, world_size=world_size)
 
     # -- Chat-style tasks --
 
