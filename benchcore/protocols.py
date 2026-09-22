@@ -48,3 +48,16 @@ class Generator(Protocol):
         0/1 lists (0 = forced/tool-injected, 1 = sampled) -- see nanochat.engine.Engine.generate_batch,
         the reference implementation. Only `results` is used by benchcore's generative eval loop."""
         ...
+
+    # OPTIONAL, not declared here (see module docstring): a generator that can decode several
+    # DIFFERENT prompts in one batch offers
+    #   generate_batch_multi(prompts, num_samples=1, **kwargs)
+    # prompts: list[list[int]], one prompt per problem. Returns (results, masks) nested one level
+    # deeper than generate_batch: results[p] is the num_samples token-id lists for prompts[p] (each
+    # the prompt plus its continuation), masks[p] the matching 0/1 lists; same kwargs as
+    # generate_batch. Contract: generate_batch_multi([t], n) is generate_batch(t, n) wrapped in a
+    # one-element list. benchcore's generative loop uses it when asked for a batch size above 1 and
+    # otherwise -- or when a generator lacks it -- falls back to one generate_batch per problem, so
+    # a generator without it keeps working unmodified. It is a separate method rather than a wider
+    # generate_batch because a wider argument cannot be feature-detected (getattr finds the method
+    # either way) and one method returning flat-or-nested rows would index fine in both shapes.

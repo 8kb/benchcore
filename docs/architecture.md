@@ -60,7 +60,10 @@ Derived directly from what the evaluation code actually calls (not designed up f
 - `Tokenizer`: `encode(text, prepend=None)`, `decode(ids)`, `get_bos_token_id()`.
   `render_for_completion(conversation)` is needed only for chat-suite evaluation, not CORE.
 - `Generator`: `generate_batch(tokens, num_samples=1, **kwargs) -> (results, masks)` — only
-  `results` is read.
+  `results` is read. An OPTIONAL `generate_batch_multi(prompts, num_samples=1, **kwargs)` decodes
+  several *different* prompts in one batch, returning the same pair nested one level deeper
+  (`results[p]` is prompt `p`'s `num_samples` rows); it is feature-detected with `getattr`, so a
+  generator without it keeps working unmodified.
 
 A `modelcore.Model` satisfies `Model` unmodified (it's an `nn.Module`); a host's own tokenizer and
 generator commonly satisfy `Tokenizer`/`Generator` unmodified too (`nanochat.tokenizer.
@@ -109,9 +112,16 @@ is the mean of every task's centered accuracy.
 conversation's prompt via `tokenizer.render_for_completion`, forwards the model once per batch,
 and picks whichever answer letter has the highest logit at the last prompt position — narrowing
 the argmax to just the available letters, which is why every letter must tokenize to exactly one
-token (asserted, not just assumed). `chat.run_generative_eval` goes one problem at a time: render
-the prompt, sample `num_samples` completions from `generator.generate_batch`, and the problem
-passes if *any* completion does (pass@k semantics).
+token (asserted, not just assumed). `chat.run_generative_eval` by default goes one problem at a
+time: render the prompt, sample `num_samples` completions from `generator.generate_batch`, and the
+problem passes if *any* completion does (pass@k semantics). With `batch_size > 1` and a generator
+offering `generate_batch_multi` it decodes that many different problems per batch instead — after
+the usual per-rank sharding, sorted by prompt length within a rank, and with each row sliced by its
+*own* prompt's length. At temperature 0 the result is identical to the one-at-a-time loop; above 0
+one RNG stream now serves a whole batch, so sampled tokens differ. `BenchManager.chat`/`chat_suite`
+expose this as `generative_batch_size` (default 1), deliberately separate from `batch_size`, which
+is the categorical loop's problems-per-forward and never reaches generation. `eval_workers` scores a
+batch's completions in threads (HumanEval runs each in its own subprocess); default 1.
 
 `chatcore_metric(accuracies, tasks=ALL_CHAT_TASKS, baselines=CHAT_BASELINE_ACCURACIES)` is the
 same centering idea as CORE's, applied to a fixed five-task suite (ARC-Easy/ARC-Challenge/MMLU/

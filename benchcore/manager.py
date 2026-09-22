@@ -90,12 +90,20 @@ class BenchManager:
 
     # -- Chat-style tasks --
 
-    def chat(self, task, model, tokenizer, *, generator=None, batch_size=1, num_samples=1,
-              max_new_tokens=512, temperature=0.0, top_k=50, max_problems=None,
-              device=None, rank=0, world_size=1) -> float:
+    def chat(self, task, model, tokenizer, *, generator=None, batch_size=1, generative_batch_size=1,
+              num_samples=1, max_new_tokens=512, temperature=0.0, top_k=50, max_problems=None,
+              eval_workers=1, device=None, rank=0, world_size=1) -> float:
         """Evaluate one chat-style Task's accuracy (0-1). `task.eval_type` selects the loop:
         'categorical' reads logits directly (no generator needed); 'generative' samples from
-        `generator` and checks the completion (a Generator is required)."""
+        `generator` and checks the completion (a Generator is required).
+
+        `batch_size` is the categorical loop's problems-per-forward and never reaches the generative
+        loop. `generative_batch_size` is the generative loop's problems-per-decode-batch: 1 (default)
+        is the one-problem-at-a-time loop and asks nothing of the generator; more needs a generator
+        with generate_batch_multi (see benchcore.protocols.Generator) and, at temperature > 0,
+        changes which tokens are sampled. It is a separate knob on purpose: reusing `batch_size`
+        would switch generative batching on for every caller already passing one. `eval_workers`
+        scores a generative batch's completions in that many threads."""
         if task.eval_type == 'categorical':
             num_passed, total = run_categorical_eval(
                 task, tokenizer, model, batch_size, max_problems=max_problems,
@@ -106,7 +114,8 @@ class BenchManager:
                 raise ValueError(f"task {task!r} is generative and needs a Generator (pass generator=...)")
             num_passed, total = run_generative_eval(
                 task, tokenizer, generator, num_samples, max_new_tokens, temperature, top_k,
-                max_problems=max_problems, rank=rank, world_size=world_size,
+                max_problems=max_problems, batch_size=generative_batch_size, eval_workers=eval_workers,
+                rank=rank, world_size=world_size,
             )
         else:
             raise ValueError(f"Unsupported task eval_type: {task.eval_type}")
@@ -115,8 +124,9 @@ class BenchManager:
         return num_passed / total
 
     def chat_suite(self, tasks: dict, model, tokenizer, *, generator=None, batch_size=1,
-                    num_samples=1, max_new_tokens=512, temperature=0.0, top_k=50,
-                    max_problems=None, device=None, rank=0, world_size=1) -> ChatReport:
+                    generative_batch_size=1, num_samples=1, max_new_tokens=512, temperature=0.0,
+                    top_k=50, max_problems=None, eval_workers=1, device=None, rank=0,
+                    world_size=1) -> ChatReport:
         """Evaluate a dict of {task_name: Task} in one pass. If every name in
         benchcore.chat.ALL_CHAT_TASKS (ARC-Easy/ARC-Challenge/MMLU/GSM8K/HumanEval) is present,
         also computes the ChatCORE metric (mean centered accuracy against
@@ -127,8 +137,10 @@ class BenchManager:
         for name, task in tasks.items():
             results[name] = self.chat(
                 task, model, tokenizer, generator=generator, batch_size=batch_size,
-                num_samples=num_samples, max_new_tokens=max_new_tokens, temperature=temperature,
-                top_k=top_k, max_problems=max_problems, device=device, rank=rank, world_size=world_size,
+                generative_batch_size=generative_batch_size, num_samples=num_samples,
+                max_new_tokens=max_new_tokens, temperature=temperature, top_k=top_k,
+                max_problems=max_problems, eval_workers=eval_workers, device=device, rank=rank,
+                world_size=world_size,
             )
         metric = chatcore_metric(results) if set(ALL_CHAT_TASKS) <= set(results) else None
         return ChatReport(results=results, chatcore_metric=metric)

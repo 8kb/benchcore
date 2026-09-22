@@ -41,6 +41,14 @@ benchcore/
 
 ## Invariants that will bite you
 
+- **`generative_batch_size` is not `batch_size`.** `batch_size` is the categorical loop's
+  problems-per-forward; hosts already pass one (nanochat's `chat_eval.py` defaults it to 8), so
+  reusing it for generation would silently switch batching on for every existing caller and change
+  their numbers. Batched generation is opt-in via `generate_batch_multi` on the generator plus
+  `generative_batch_size > 1`; a generator without the method falls back to one problem at a time
+  rather than failing. The per-row prompt length (each row is sliced by its *own* prompt's length)
+  is the one thing that breaks silently under mixed lengths — `test_chat_generative_batched.py`'s
+  problems end in a decoy `#### N` precisely so a wrong prefix changes the score.
 - **No ambient distributed state.** `core.evaluate_task` and both `chat.py` eval loops take
   explicit `rank`/`world_size` parameters and return each rank's partial `(correct, count)` /
   `(num_passed, total)` rather than calling `torch.distributed` themselves — mirrors

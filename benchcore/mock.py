@@ -126,7 +126,9 @@ class ScriptedGenerator:
     A deterministic Generator for benchcore's own tests: generate_batch(tokens, num_samples, ...)
     returns num_samples copies of `tokens + continuation`, where continuation is looked up by the
     exact prompt token tuple (see register()). An unregistered prompt returns no continuation
-    (the completion decodes to an empty string).
+    (the completion decodes to an empty string). generate_batch_multi is the same lookup per
+    prompt, so this generator advertises the optional multi-prompt capability -- wrap it (or
+    subclass and delete the method) to test a generator that doesn't.
     """
 
     def __init__(self):
@@ -141,3 +143,7 @@ class ScriptedGenerator:
         results = [list(result) for _ in range(num_samples)]
         masks = [[1] * len(result) for _ in range(num_samples)]
         return results, masks
+
+    def generate_batch_multi(self, prompts, num_samples=1, **kwargs):
+        pairs = [self.generate_batch(prompt, num_samples, **kwargs) for prompt in prompts]
+        return [results for results, _ in pairs], [masks for _, masks in pairs]

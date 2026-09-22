@@ -9,6 +9,8 @@ rank's partial (num_passed, total) rather than calling dist.all_reduce themselve
 benchcore.core.evaluate_task and datacore.DataManager.batches(). A caller under torchrun reduces
 across ranks itself, or uses BenchManager.chat()/chat_suite() which does this for it.
 """
+from concurrent.futures import ThreadPoolExecutor
+
 import torch
 
 # The standard five-task ChatCORE suite and each task's random-guess baseline accuracy.
@@ -23,27 +25,82 @@ CHAT_BASELINE_ACCURACIES = {
 }
 
 
+def _score(task_object, pairs, eval_workers):
+    """task_object.evaluate over (conversation, completion) pairs, results in input order.
+    evaluate() never touches shared state on any task, and the one slow scorer (HumanEval's
+    execute_code) blocks on its own subprocess rather than the GIL, so threads are enough."""
+    if eval_workers <= 1 or len(pairs) <= 1:
+        return [task_object.evaluate(conversation, completion) for conversation, completion in pairs]
+    with ThreadPoolExecutor(max_workers=eval_workers) as pool:
+        return list(pool.map(lambda pair: task_object.evaluate(*pair), pairs))
+
+
 def run_generative_eval(task_object, tokenizer, generator, num_samples, max_new_tokens, temperature, top_k,
-                         max_problems=None, *, rank=0, world_size=1):
-    """We go one problem at a time, sample, evaluate. Returns this rank's (num_passed, total)."""
+                         max_problems=None, *, batch_size=1, eval_workers=1, rank=0, world_size=1):
+    """Sample a completion per problem, score it, and pass a problem if any of its num_samples
+    completions passes (pass@k). Returns this rank's (num_passed, total).
+
+    batch_size=1 (default): one problem at a time through generator.generate_batch -- the original
+    loop, and what any Generator supports. batch_size > 1 decodes that many DIFFERENT problems per
+    batch, when the generator offers generate_batch_multi (see benchcore.protocols.Generator; one
+    without it silently keeps the one-at-a-time loop). Batching happens strictly within a rank,
+    after the usual range(rank, n, world_size) sharding, so each rank's (num_passed, total) covers
+    the same problems it always did. Within a rank problems are sorted by prompt length before being
+    chunked, which keeps a batch's rows near the same length. batch_size counts problems, so a
+    decode batch has batch_size * num_samples rows. Sampled tokens differ from the unbatched loop at
+    temperature > 0 (one RNG stream per batch); at temperature 0 they are identical.
+
+    eval_workers > 1 scores a batch's completions in that many threads (HumanEval runs each in its
+    own subprocess); the default 1 scores serially."""
     num_problems = len(task_object) if max_problems is None else min(len(task_object), max_problems)
+    indices = list(range(rank, num_problems, world_size))
+    generate_multi = getattr(generator, "generate_batch_multi", None) if batch_size > 1 else None
     num_passed, total = 0, 0
-    for i in range(rank, num_problems, world_size):
-        conversation = task_object[i]
-        encoded_prompt = tokenizer.render_for_completion(conversation)
-        results, _ = generator.generate_batch(
-            encoded_prompt,
+
+    if generate_multi is None:
+        for i in indices:
+            conversation = task_object[i]
+            encoded_prompt = tokenizer.render_for_completion(conversation)
+            results, _ = generator.generate_batch(
+                encoded_prompt,
+                num_samples=num_samples,
+                max_tokens=max_new_tokens,
+                temperature=temperature,
+                top_k=top_k,
+            )
+            prefix_length = len(encoded_prompt)
+            completions = [tokenizer.decode(result_tokens[prefix_length:]) for result_tokens in results]
+            outcomes = _score(task_object, [(conversation, completion) for completion in completions], eval_workers)
+            passed = any(outcomes)
+            total += 1
+            num_passed += int(passed)
+        return num_passed, total
+
+    conversations = {i: task_object[i] for i in indices}
+    prompts = {i: tokenizer.render_for_completion(conversations[i]) for i in indices}
+    order = sorted(indices, key=lambda i: len(prompts[i]))
+    for start in range(0, len(order), batch_size):
+        chunk = order[start:start + batch_size]
+        batch_prompts = [prompts[i] for i in chunk]
+        results, _ = generate_multi(
+            batch_prompts,
             num_samples=num_samples,
             max_tokens=max_new_tokens,
             temperature=temperature,
             top_k=top_k,
         )
-        prefix_length = len(encoded_prompt)
-        completions = [tokenizer.decode(result_tokens[prefix_length:]) for result_tokens in results]
-        outcomes = [task_object.evaluate(conversation, completion) for completion in completions]
-        passed = any(outcomes)
-        total += 1
-        num_passed += int(passed)
+        pairs = [
+            (conversations[i], tokenizer.decode(result_tokens[len(prompt):]))  # per-row prefix: prompts differ
+            for i, prompt, rows in zip(chunk, batch_prompts, results)
+            for result_tokens in rows
+        ]
+        outcomes = _score(task_object, pairs, eval_workers)
+        offset = 0
+        for rows in results:
+            passed = any(outcomes[offset:offset + len(rows)])
+            offset += len(rows)
+            total += 1
+            num_passed += int(passed)
     return num_passed, total
 
 
