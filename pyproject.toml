@@ -1,6 +1,6 @@
 [project]
 name = "benchcore"
-version = "0.2.1"
+version = "0.3.0"
 description = "A standalone evaluation subsystem: score any model against ICL benchmarks (CORE) and chat-style tasks (ARC/MMLU/GSM8K/HumanEval) through small duck-typed protocols"
 readme = "README.md"
 requires-python = ">=3.10"
