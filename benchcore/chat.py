@@ -36,7 +36,7 @@ def _score(task_object, pairs, eval_workers):
 
 
 def run_generative_eval(task_object, tokenizer, generator, num_samples, max_new_tokens, temperature, top_k,
-                         max_problems=None, *, batch_size=1, eval_workers=1, rank=0, world_size=1):
+                         max_problems=None, *, batch_size=1, eval_workers=1, rank=0, world_size=1, log=None):
     """Sample a completion per problem, score it, and pass a problem if any of its num_samples
     completions passes (pass@k). Returns this rank's (num_passed, total).
 
@@ -51,11 +51,15 @@ def run_generative_eval(task_object, tokenizer, generator, num_samples, max_new_
     temperature > 0 (one RNG stream per batch); at temperature 0 they are identical.
 
     eval_workers > 1 scores a batch's completions in that many threads (HumanEval runs each in its
-    own subprocess); the default 1 scores serially."""
+    own subprocess); the default 1 scores serially. `log(msg)`, if given, is called periodically
+    (about 20 times over the whole task, regardless of task size) -- this is the slowest, most
+    opaque loop in the whole chat suite (each problem is a full autoregressive decode), so it's
+    the one place a caller most needs real progress, not just a final number."""
     num_problems = len(task_object) if max_problems is None else min(len(task_object), max_problems)
     indices = list(range(rank, num_problems, world_size))
     generate_multi = getattr(generator, "generate_batch_multi", None) if batch_size > 1 else None
     num_passed, total = 0, 0
+    log_every = max(1, len(indices) // 20)
 
     if generate_multi is None:
         for i in indices:
@@ -74,12 +78,16 @@ def run_generative_eval(task_object, tokenizer, generator, num_samples, max_new_
             passed = any(outcomes)
             total += 1
             num_passed += int(passed)
+            if log is not None and (total % log_every == 0 or total == len(indices)):
+                log(f"    problem {total}/{len(indices)}: {num_passed}/{total} passed so far")
         return num_passed, total
 
     conversations = {i: task_object[i] for i in indices}
     prompts = {i: tokenizer.render_for_completion(conversations[i]) for i in indices}
     order = sorted(indices, key=lambda i: len(prompts[i]))
-    for start in range(0, len(order), batch_size):
+    num_batches = -(-len(order) // batch_size)
+    log_every_batch = max(1, num_batches // 20)
+    for batch_num, start in enumerate(range(0, len(order), batch_size), 1):
         chunk = order[start:start + batch_size]
         batch_prompts = [prompts[i] for i in chunk]
         results, _ = generate_multi(
@@ -101,13 +109,17 @@ def run_generative_eval(task_object, tokenizer, generator, num_samples, max_new_
             offset += len(rows)
             total += 1
             num_passed += int(passed)
+        if log is not None and (batch_num % log_every_batch == 0 or batch_num == num_batches):
+            log(f"    batch {batch_num}/{num_batches} ({total}/{len(order)} problems): {num_passed}/{total} passed so far")
     return num_passed, total
 
 
-def run_categorical_eval(task_object, tokenizer, model, batch_size, max_problems=None, *, device=None, rank=0, world_size=1):
+def run_categorical_eval(task_object, tokenizer, model, batch_size, max_problems=None, *, device=None, rank=0, world_size=1, log=None):
     """
     A lot easier because we don't have to sample: batches of independent problems at a time,
     checking the logits for correct answer choices. Returns this rank's (num_passed, total).
+    `log(msg)`, if given, is called periodically (about 10 times over the whole task) -- lighter
+    than run_generative_eval's, since this loop is forward-pass-only and already fast.
     """
     device = device if device is not None else getattr(model, "get_device", lambda: torch.device("cpu"))()
     bos = tokenizer.get_bos_token_id() # use BOS as pad token is ok, these positions are ignored
@@ -115,10 +127,12 @@ def run_categorical_eval(task_object, tokenizer, model, batch_size, max_problems
     num_problems = len(task_object) if max_problems is None else min(len(task_object), max_problems)
     ceil_div = lambda x, y: -(-x // y)
     num_batches = ceil_div(num_problems, batch_size)
+    own_batches = range(rank, num_batches, world_size)
+    log_every = max(1, len(own_batches) // 10)
 
     letter_to_id_cache = {} # many letters will repeat often, let's save the tokenizer some work
     num_passed, total = 0, 0
-    for i in range(rank, num_batches, world_size):
+    for done, i in enumerate(own_batches, 1):
         i0, i1 = i * batch_size, min((i + 1) * batch_size, num_problems)
 
         conversations = [task_object[ii] for ii in range(i0, i1)]
@@ -147,6 +161,9 @@ def run_categorical_eval(task_object, tokenizer, model, batch_size, max_problems
             outcome = task_object.evaluate(conversation, predicted_letter)
             num_passed += int(outcome)
             total += 1
+
+        if log is not None and (done % log_every == 0 or done == len(own_batches)):
+            log(f"    batch {done}/{len(own_batches)} ({total} problems): {num_passed}/{total} passed so far")
 
     return num_passed, total
 
