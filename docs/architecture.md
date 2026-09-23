@@ -106,6 +106,12 @@ shifting, for a model that can't forward beyond a fixed length.
 `center(accuracy, random_baseline)` maps `[random_baseline%, 100%]` onto `[0, 1]`; the CORE metric
 is the mean of every task's centered accuracy.
 
+`BenchManager.core`/`core_suite` take an optional `log(msg)` callback, called once per completed
+task -- CORE's only real progress signal, since `evaluate_task` itself loops examples serially with
+no cross-example batching (unlike `chat.run_categorical_eval` below) and has no finer-grained
+visibility point worth exposing. A caller with nothing to pass gets identical behavior to before
+(`log=None` is the default everywhere it's threaded through).
+
 ## Chat-style task evaluation
 
 `chat.run_categorical_eval` batches independent problems (no sampling needed): it renders each
@@ -122,6 +128,15 @@ one RNG stream now serves a whole batch, so sampled tokens differ. `BenchManager
 expose this as `generative_batch_size` (default 1), deliberately separate from `batch_size`, which
 is the categorical loop's problems-per-forward and never reaches generation. `eval_workers` scores a
 batch's completions in threads (HumanEval runs each in its own subprocess); default 1.
+
+`BenchManager.chat`/`chat_suite` also take an optional `log(msg)`: `chat_suite` calls it once when
+each named task starts, and forwards it into `chat()`, which passes it down into whichever loop
+runs. `run_generative_eval` and `run_categorical_eval` each call it periodically (about 20 times
+over the whole task regardless of task size, via a `max(1, count // 20)` stride) -- the generative
+loop is the one that actually needs this: each problem is a full autoregressive decode, the
+slowest and most opaque part of the whole suite (GSM8K's ~1,319 problems and HumanEval's ~164 have
+each, historically, cost more than training the model under evaluation -- see this family's own
+`nanochat/docs/contest.md`).
 
 `chatcore_metric(accuracies, tasks=ALL_CHAT_TASKS, baselines=CHAT_BASELINE_ACCURACIES)` is the
 same centering idea as CORE's, applied to a fixed five-task suite (ARC-Easy/ARC-Challenge/MMLU/
